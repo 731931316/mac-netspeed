@@ -1,0 +1,44 @@
+name: Unit and smoke tests
+
+# Checks cover two macOS runner versions without uploading any local user data.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: macOS (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Unit tests
+        env:
+          NETSPEED_TEST_BUILD_DIR: ${{ runner.temp }}/netspeed-unit
+        run: ./scripts/test.sh
+      - name: Build native application
+        env:
+          NETSPEED_BUILD_DIR: ${{ runner.temp }}/netspeed-app
+        run: NETSPEED_ARCHITECTURES="$(uname -m)" ./scripts/build-app.sh
+      - name: Application smoke test
+        env:
+          NETSPEED_SMOKE_DIR: ${{ runner.temp }}/netspeed-smoke
+        run: ./scripts/smoke-test.sh ./dist/NetSpeed.app
+      - name: Keep smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.runner }}
+          path: ${{ runner.temp }}/netspeed-smoke
+          if-no-files-found: ignore

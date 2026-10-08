@@ -1,0 +1,7 @@
+# Build products and local editor state never enter source control.
+.build/
+.swiftpm/
+dist/
+.DS_Store
+*.xcuserstate
+xcuserdata/
