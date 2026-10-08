@@ -2,7 +2,7 @@
 # Exercise the packaged app's startup, live sampling, renderer, menu, and clean exit.
 set -euo pipefail
 if [[ $# -ne 1 ]]; then
-    echo "Usage: scripts/smoke-test.sh /path/to/NetSpeed.app" >&2
+    echo "Usage: scripts/smoke-test.sh /path/to/速喵.app" >&2
     exit 2
 fi
 
@@ -39,6 +39,14 @@ if not report.is_file():
 result = json.loads(report.read_text(encoding="utf-8"))
 if result.get("success") is not True:
     raise SystemExit(f"Smoke checks failed; report: {report}")
+# A previous app version must not pass without exercising the newly added settings chain.
+required_checks = {
+    "settingsConstruction", "refreshPreferenceSync", "loginItemReadOnly",
+    "loginItemStatusMapped", "applicationIdentity", "applicationIcon",
+}
+checks = result.get("checks", {})
+if any(checks.get(name) is not True for name in required_checks):
+    raise SystemExit(f"Settings smoke evidence is incomplete; report: {report}")
 print(json.dumps(result, ensure_ascii=False, indent=2))
 print(f"Report: {report}")
 PY

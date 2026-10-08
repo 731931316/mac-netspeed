@@ -8,10 +8,10 @@ PROJECT_DIRECTORY="$(cd "$SCRIPT_DIRECTORY/.." && pwd)"
 BUILD_DIRECTORY="${NETSPEED_BUILD_DIR:-$PROJECT_DIRECTORY/.build/packaging}"
 OUTPUT_DIRECTORY="${NETSPEED_OUTPUT_DIR:-$PROJECT_DIRECTORY/dist}"
 ARCHITECTURES="${NETSPEED_ARCHITECTURES:-arm64 x86_64}"
-APP_DIRECTORY="$OUTPUT_DIRECTORY/NetSpeed.app"
+APP_DIRECTORY="$OUTPUT_DIRECTORY/速喵.app"
 BINARIES=()
 
-mkdir -p "$BUILD_DIRECTORY" "$APP_DIRECTORY/Contents/MacOS"
+mkdir -p "$BUILD_DIRECTORY" "$APP_DIRECTORY/Contents/MacOS" "$APP_DIRECTORY/Contents/Resources"
 cd "$PROJECT_DIRECTORY"
 
 # Separate scratch directories keep cross-architecture compiler outputs isolated.
@@ -31,6 +31,8 @@ done
 /usr/bin/lipo -create "${BINARIES[@]}" -output "$APP_DIRECTORY/Contents/MacOS/NetSpeed"
 /bin/chmod 755 "$APP_DIRECTORY/Contents/MacOS/NetSpeed"
 /usr/bin/install -m 644 "$PROJECT_DIRECTORY/Resources/Info.plist" "$APP_DIRECTORY/Contents/Info.plist"
+# Export the approved mascot at all standard macOS icon resolutions before signing.
+"$PROJECT_DIRECTORY/scripts/build-icon.sh" "$APP_DIRECTORY/Contents/Resources/AppIcon.icns"
 /usr/bin/plutil -lint "$APP_DIRECTORY/Contents/Info.plist"
 
 # Local ad-hoc signing verifies bundle integrity without a paid developer account.

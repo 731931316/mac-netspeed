@@ -20,6 +20,14 @@ struct SmokeReport: Codable, Sendable {
     let imageHeightPoints: Double
     /// Records whether the actual image contains visible glyph alpha.
     let imageHasVisiblePixels: Bool
+    /// Confirms the expected application identity without returning arbitrary bundle text.
+    let applicationName: String
+    /// Records the inspected bundle version for release diagnostics.
+    let applicationVersion: String
+    /// Records one of the four mapped login states without personal system details.
+    let loginItemStatus: String
+    /// Records that smoke-test dependencies cannot mutate real system login items.
+    let loginItemSupportsChanges: Bool
     /// Records elapsed monotonic time rather than a machine-local timestamp.
     let elapsedSeconds: Double
     /// Names independent checks so a failed report remains actionable.

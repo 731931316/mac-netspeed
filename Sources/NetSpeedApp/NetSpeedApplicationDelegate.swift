@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import NetSpeedCore
+import NetSpeedSettings
 import OSLog
 
 /// Owns the menu-bar UI and its lifecycle, leaving counter reads to an isolated actor.
@@ -13,6 +14,12 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "io.github.mac-netspeed", category: "Application")
     /// Serializes reader and calculator access independently of the main actor.
     private let sampler = NetworkSamplingService()
+    /// Provides one shared refresh preference for menu, settings, and timer configuration.
+    private let preferences: RefreshPreferences
+    /// Reflects real login-item state through a writable or diagnostic-only service.
+    private let loginItems: LoginItemController
+    /// Retains a reusable settings window after the first user request or smoke construction.
+    private var settingsWindowController: SettingsWindowController?
     /// Retains the status item for the full lifetime of the application.
     private var statusItem: NSStatusItem?
     /// Retains the native menu displayed by the status button.
@@ -37,8 +44,6 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
     private var isSleeping = false
     /// Prevents duplicate report writes and shutdown work.
     private var isFinishingSmoke = false
-    /// Stores the selected, validated interval without changing settings during smoke tests.
-    private var refreshInterval: TimeInterval = 1
     /// Counts actual smoke-test sampling attempts, including failed reads.
     private var smokeSamplingAttemptCount = 0
     /// Counts successful reads of real system counters for smoke evidence.
@@ -47,21 +52,25 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
     private var smokeScheduledRefreshCount = 0
     /// Anchors diagnostic elapsed time to a monotonic clock.
     private var smokeStartTime: TimeInterval = 0
-    /// Stores the approved interval choices in seconds.
-    private let supportedIntervals: [TimeInterval] = [0.5, 1, 2]
-    /// Names the sole persisted application preference.
-    private let intervalPreferenceKey = "refreshIntervalSeconds"
 
     /// Retains immutable launch options before AppKit begins delivering callbacks.
     init(options: LaunchOptions) {
         self.options = options
+        self.preferences = RefreshPreferences()
+        // Diagnostic mode has no capability to register, unregister, or open system settings.
+        let service: any LoginItemServicing
+        if options.smokeTest {
+            service = ReadOnlyLoginItemService()
+        } else {
+            service = SystemLoginItemService()
+        }
+        self.loginItems = LoginItemController(service: service)
         super.init()
     }
 
     /// Builds the native status item, registers sleep notifications, and starts sampling.
     func applicationDidFinishLaunching(_ notification: Notification) {
         smokeStartTime = ProcessInfo.processInfo.systemUptime
-        refreshInterval = loadRefreshInterval()
         buildMenu()
         let item = NSStatusBar.system.statusItem(withLength: StatusImageRenderer.width)
         item.menu = menu
@@ -83,6 +92,8 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         )
 
         if options.smokeTest {
+            // Construction checks native settings without showing UI or changing preferences.
+            _ = makeSettingsWindow()
             let timeout = Timer(
                 timeInterval: 12,
                 target: self,
@@ -94,7 +105,7 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
             RunLoop.main.add(timeout, forMode: .common)
         }
 
-        logger.info("菜单栏网速应用已启动")
+        logger.info("速喵已启动")
         startRefreshTimer()
         requestSample()
     }
@@ -102,10 +113,15 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
     /// Releases the timer and native status item when the user quits normally.
     func applicationWillTerminate(_ notification: Notification) {
         cleanUp()
-        logger.info("菜单栏网速应用已退出")
+        logger.info("速喵已退出")
     }
 
-    /// Constructs read-only speed details, persisted refresh choices, and quit action.
+    /// Reads external login-item changes when the app regains focus from System Settings.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        settingsWindowController?.refreshSystemStatus()
+    }
+
+    /// Constructs speed details, shared refresh choices, native settings, and quit action.
     private func buildMenu() {
         menu.autoenablesItems = false
         let heading = NSMenuItem(title: "实时速度", action: nil, keyEquivalent: "")
@@ -120,12 +136,13 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         let intervalItem = NSMenuItem(title: "刷新间隔", action: nil, keyEquivalent: "")
         let intervalMenu = NSMenu(title: "刷新间隔")
         intervalMenu.autoenablesItems = false
-        for interval in supportedIntervals {
+        for interval in RefreshPreferences.supportedIntervals {
             let title = interval == 0.5 ? "0.5 秒" : "\(Int(interval)) 秒"
             let choice = NSMenuItem(title: title, action: #selector(changeRefreshInterval(_:)), keyEquivalent: "")
             choice.target = self
             choice.representedObject = NSNumber(value: interval)
-            choice.state = interval == refreshInterval ? .on : .off
+            choice.state = interval == preferences.interval ? .on : .off
+            choice.isEnabled = !options.smokeTest
             intervalMenu.addItem(choice)
             intervalMenuItems.append(choice)
         }
@@ -133,22 +150,12 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(intervalItem)
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出网速", action: #selector(quit(_:)), keyEquivalent: "q")
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let quitItem = NSMenuItem(title: "退出速喵", action: #selector(quit(_:)), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-    }
-
-    /// Loads only approved intervals and uses a safe default for invalid stored data.
-    private func loadRefreshInterval() -> TimeInterval {
-        guard let storedValue = UserDefaults.standard.object(forKey: intervalPreferenceKey) else {
-            return 1
-        }
-        guard let value = storedValue as? NSNumber,
-              supportedIntervals.contains(value.doubleValue) else {
-            logger.warning("刷新间隔配置无效，使用默认 1 秒")
-            return 1
-        }
-        return value.doubleValue
     }
 
     /// Replaces the repeating timer while allowing menu tracking to keep refreshing.
@@ -156,6 +163,7 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         refreshTimer = nil
         guard !isSleeping, !isFinishingSmoke else { return }
+        let refreshInterval = preferences.interval
         let timer = Timer(
             timeInterval: refreshInterval,
             target: self,
@@ -235,18 +243,48 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         button.setAccessibilityLabel(description)
     }
 
-    /// Persists a selected approved interval and restarts the awake scheduler.
+    /// Saves a menu-selected interval through the same preference object as the settings.
     @objc private func changeRefreshInterval(_ sender: NSMenuItem) {
+        guard !options.smokeTest else {
+            logger.debug("冒烟模式忽略刷新间隔修改请求")
+            return
+        }
         guard let value = sender.representedObject as? NSNumber,
-              supportedIntervals.contains(value.doubleValue) else { return }
-        refreshInterval = value.doubleValue
-        UserDefaults.standard.set(refreshInterval, forKey: intervalPreferenceKey)
+              preferences.setInterval(value.doubleValue) else { return }
+        refreshPreferencesDidChange()
+    }
+
+    /// Applies one shared preference change to both controls and the awake scheduler.
+    private func refreshPreferencesDidChange() {
         for item in intervalMenuItems {
             let itemValue = (item.representedObject as? NSNumber)?.doubleValue
-            item.state = itemValue == refreshInterval ? .on : .off
+            item.state = itemValue == preferences.interval ? .on : .off
         }
-        logger.info("已更新网速刷新间隔")
+        settingsWindowController?.synchronizePreferences()
         startRefreshTimer()
+        logger.info("已应用网速刷新间隔")
+    }
+
+    /// Lazily creates a retained settings controller without showing or activating its window.
+    private func makeSettingsWindow() -> SettingsWindowController {
+        if let settingsWindowController { return settingsWindowController }
+        let controller = SettingsWindowController(
+            preferences: preferences,
+            loginItems: loginItems,
+            allowsPreferenceChanges: !options.smokeTest,
+            onIntervalChanged: { [weak self] in self?.refreshPreferencesDidChange() }
+        )
+        settingsWindowController = controller
+        return controller
+    }
+
+    /// Opens settings only after a user action; bounded diagnostics never show the window.
+    @objc private func showSettings(_ sender: NSMenuItem) {
+        guard !options.smokeTest else {
+            logger.debug("冒烟模式忽略显示设置窗口请求")
+            return
+        }
+        makeSettingsWindow().present()
     }
 
     /// Stops scheduled reads and invalidates in-flight UI results before system sleep.
@@ -296,15 +334,34 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         let image = statusItem?.button?.image
         let size = image?.size ?? .zero
         let visiblePixels = image.map(StatusImageRenderer.hasVisiblePixels) ?? false
+        let settings = makeSettingsWindow()
+        settings.refreshSystemStatus()
+        let settingsChecks = settings.smokeChecks()
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+        let displayName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let selectedInterval = preferences.interval
+        let menuPreferenceSynchronized = intervalMenuItems.count == RefreshPreferences.supportedIntervals.count
+            && intervalMenuItems.allSatisfy {
+                let itemInterval = ($0.representedObject as? NSNumber)?.doubleValue
+                return $0.state == (itemInterval == selectedInterval ? .on : .off) && !$0.isEnabled
+            }
         var checks: [String: Bool] = [
             "startup": statusItem?.button != nil && NSApplication.shared.activationPolicy() == .accessory,
             "threeRealSamples": smokeRealSampleCount == 3 && smokeSamplingAttemptCount == 3,
-            "menuConstruction": statusItem?.menu === menu && intervalMenuItems.count == supportedIntervals.count
-                && menu.items.contains(where: { $0.action == #selector(quit(_:)) }),
+            "menuConstruction": statusItem?.menu === menu && intervalMenuItems.count == RefreshPreferences.supportedIntervals.count
+                && menu.items.contains(where: { $0.action == #selector(quit(_:)) })
+                && menu.items.contains(where: { $0.action == #selector(showSettings(_:)) }),
             "imageDimensions": size.width == StatusImageRenderer.width && size.height == StatusImageRenderer.height,
             "imageContent": visiblePixels,
             "scheduledRefresh": smokeScheduledRefreshCount >= 2 && refreshTimer?.isValid == true,
-            "completedWithinDeadline": !timedOut
+            "completedWithinDeadline": !timedOut,
+            "settingsConstruction": settingsChecks["settingsConstruction"] == true,
+            "refreshPreferenceSync": settingsChecks["refreshPreferenceSync"] == true && menuPreferenceSynchronized,
+            "loginItemReadOnly": settingsChecks["loginItemReadOnly"] == true,
+            "loginItemStatusMapped": settingsChecks["loginItemStatusMapped"] == true,
+            "applicationIdentity": name == "速喵" && displayName == "速喵",
+            "applicationIcon": settingsChecks["applicationIcon"] == true
         ]
 
         if let previewURL = options.renderPreviewURL {
@@ -324,11 +381,15 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
             realSampleCount: smokeRealSampleCount,
             samplingAttemptCount: smokeSamplingAttemptCount,
             scheduledRefreshCount: smokeScheduledRefreshCount,
-            refreshIntervalSeconds: refreshInterval,
+            refreshIntervalSeconds: preferences.interval,
             menuItemCount: menu.items.count,
             imageWidthPoints: Double(size.width),
             imageHeightPoints: Double(size.height),
             imageHasVisiblePixels: visiblePixels,
+            applicationName: name == "速喵" ? "速喵" : "unexpected",
+            applicationVersion: version ?? "unknown",
+            loginItemStatus: settings.diagnosticLoginItemStatus,
+            loginItemSupportsChanges: settings.supportsLoginItemChanges,
             elapsedSeconds: ProcessInfo.processInfo.systemUptime - smokeStartTime,
             checks: checks
         )
@@ -359,6 +420,8 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
         smokeTimeoutTimer?.invalidate()
         smokeTimeoutTimer = nil
         pendingSample?.cancel()
+        settingsWindowController?.tearDown()
+        settingsWindowController = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)

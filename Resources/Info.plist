@@ -4,12 +4,14 @@
 <dict>
     <!-- Bundle identity is independent of the developer's machine or checkout. -->
     <key>CFBundleIdentifier</key><string>io.github.mac-netspeed</string>
-    <key>CFBundleName</key><string>NetSpeed</string>
-    <key>CFBundleDisplayName</key><string>网速</string>
+    <key>CFBundleName</key><string>速喵</string>
+    <key>CFBundleDisplayName</key><string>速喵</string>
     <key>CFBundleExecutable</key><string>NetSpeed</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>2</string>
+    <!-- Finder and the settings window share the exported multi-resolution mascot. -->
+    <key>CFBundleIconFile</key><string>AppIcon.icns</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <!-- A menu-bar utility has no Dock icon and does not become the active app. -->
     <key>LSUIElement</key><true/>
