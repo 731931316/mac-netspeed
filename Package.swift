@@ -18,6 +18,7 @@ let package = Package(
         .executableTarget(name: "NetSpeedApp", dependencies: ["NetSpeedCore", "NetSpeedNetwork", "NetSpeedSettings"]),
         .testTarget(name: "NetSpeedCoreTests", dependencies: ["NetSpeedCore"]),
         .testTarget(name: "NetSpeedNetworkTests", dependencies: ["NetSpeedCore", "NetSpeedNetwork"]),
-        .testTarget(name: "NetSpeedSettingsTests", dependencies: ["NetSpeedSettings"])
+        .testTarget(name: "NetSpeedSettingsTests", dependencies: ["NetSpeedSettings"]),
+        .testTarget(name: "NetSpeedAppTests", dependencies: ["NetSpeedApp", "NetSpeedCore"])
     ]
 )

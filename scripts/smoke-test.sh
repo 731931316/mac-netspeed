@@ -39,14 +39,15 @@ if not report.is_file():
 result = json.loads(report.read_text(encoding="utf-8"))
 if result.get("success") is not True:
     raise SystemExit(f"Smoke checks failed; report: {report}")
-# A previous app version must not pass without exercising the newly added settings chain.
+# Older bundles must not pass without exercising settings and the approved compact width.
 required_checks = {
     "settingsConstruction", "refreshPreferenceSync", "loginItemReadOnly",
     "loginItemStatusMapped", "applicationIdentity", "applicationIcon",
+    "compactStatusWidth",
 }
 checks = result.get("checks", {})
 if any(checks.get(name) is not True for name in required_checks):
-    raise SystemExit(f"Settings smoke evidence is incomplete; report: {report}")
+    raise SystemExit(f"Required smoke evidence is incomplete; report: {report}")
 print(json.dumps(result, ensure_ascii=False, indent=2))
 print(f"Report: {report}")
 PY

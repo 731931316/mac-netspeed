@@ -105,7 +105,7 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
             RunLoop.main.add(timeout, forMode: .common)
         }
 
-        logger.info("速喵已启动")
+        logger.info("速喵已启动，菜单栏宽度 \(StatusImageRenderer.width, privacy: .public) 点")
         startRefreshTimer()
         requestSample()
     }
@@ -353,6 +353,7 @@ final class NetSpeedApplicationDelegate: NSObject, NSApplicationDelegate {
                 && menu.items.contains(where: { $0.action == #selector(quit(_:)) })
                 && menu.items.contains(where: { $0.action == #selector(showSettings(_:)) }),
             "imageDimensions": size.width == StatusImageRenderer.width && size.height == StatusImageRenderer.height,
+            "compactStatusWidth": statusItem?.length == 72 && statusItem?.button?.frame.width == 72 && size.width == 72,
             "imageContent": visiblePixels,
             "scheduledRefresh": smokeScheduledRefreshCount >= 2 && refreshTimer?.isValid == true,
             "completedWithinDeadline": !timedOut,
